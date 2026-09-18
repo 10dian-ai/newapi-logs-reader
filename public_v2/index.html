@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="dark" />
+  <title>NewAPI Log Viewer</title>
+  <link rel="stylesheet" href="/assets/app.css" />
+</head>
+<body>
+  <div id="app" class="app-shell" aria-live="polite">
+    <section id="loginView" class="login-view" hidden>
+      <div class="login-panel">
+        <div class="brand-mark" aria-hidden="true">N</div>
+        <p class="eyebrow">NEWAPI / OBSERVABILITY</p>
+        <h1>日志控制台</h1>
+        <p class="muted login-copy">连接主库与日志库，检索调用记录和完整上下文。</p>
+        <form id="loginForm" class="login-form">
+          <label>Rootuser 用户名<input id="username" name="username" autocomplete="username" required placeholder="Rootuser" /></label>
+          <label>密码<input id="password" name="password" type="password" autocomplete="current-password" required placeholder="输入 Rootuser 密码" /></label>
+          <button class="button button-primary button-wide" type="submit">登录控制台</button>
+          <p id="loginError" class="form-error" role="alert" hidden></p>
+        </form>
+        <p class="security-note"><span class="dot dot-green"></span>默认只展示脱敏数据，可在详情中手动展开</p>
+      </div>
+    </section>
+
+    <section id="mainView" hidden>
+      <header class="topbar">
+        <div class="topbar-inner">
+          <div class="brand"><span class="brand-mark brand-mark-small">N</span><div><strong>NewAPI</strong><span>Log Viewer</span></div></div>
+          <div class="topbar-actions"><span id="userBadge" class="user-badge"></span><button id="logoutButton" class="button button-quiet" type="button">退出</button></div>
+        </div>
+      </header>
+
+      <main class="page-wrap">
+        <div class="page-heading"><div><p class="eyebrow">REQUEST HISTORY</p><h1>调用日志</h1><p class="muted">搜索请求、响应以及 NewAPI 记录的元数据。</p></div><div class="heading-actions"><button id="refreshButton" class="button button-secondary" type="button"><span class="button-icon">↻</span>刷新</button><label class="switch-control"><input id="liveToggle" type="checkbox" /><span class="switch" aria-hidden="true"></span><span>实时刷新</span></label></div></div>
+
+        <div class="status-strip" id="healthStrip"><div class="status-item"><span class="status-light status-unknown"></span><span class="status-label">主库</span><strong data-health="main">检测中</strong></div><div class="status-item"><span class="status-light status-unknown"></span><span class="status-label">日志库</span><strong data-health="log">检测中</strong></div><div class="status-item status-time"><span id="lastUpdated">尚未刷新</span></div></div>
+
+        <section class="panel search-panel" aria-label="日志搜索">
+          <div class="search-row"><div class="search-input-wrap"><span class="search-icon">⌕</span><input id="queryInput" type="search" placeholder="搜索 prompt、response、模型、用户或任意字段…" autocomplete="off" /><span id="queryHint" class="input-hint">Enter</span></div><button id="searchButton" class="button button-primary" type="button">搜索</button></div>
+          <div class="filter-row"><label class="filter-control"><span>状态</span><select id="statusFilter"><option value="">全部状态</option><option value="success">成功</option><option value="error">错误</option><option value="pending">处理中</option></select></label><label class="filter-control"><span>模型</span><input id="modelFilter" placeholder="例如 gpt-4o" /></label><label class="filter-control"><span>用户名</span><input id="userFilter" placeholder="用户名" /></label><label class="regex-control"><input id="regexToggle" type="checkbox" /><span>正则搜索</span><span class="info-dot" title="启用后，搜索内容按 JavaScript 正则匹配">?</span></label><button id="clearButton" class="button button-quiet clear-button" type="button">清除条件</button></div>
+          <p id="regexError" class="form-error filter-error" role="alert" hidden>正则表达式无效，请修改后重试。</p>
+        </section>
+
+        <section class="toolbar"><div class="result-count"><strong id="resultCount">0</strong><span>条记录</span><span id="loadingIndicator" class="loading-indicator" hidden>加载中…</span></div><div class="toolbar-actions"><button id="jsonExportButton" class="button button-secondary" type="button">导出 JSON</button><button id="csvExportButton" class="button button-secondary" type="button">导出 CSV</button></div></section>
+
+        <section class="panel table-panel"><div class="table-scroll"><table><thead><tr><th>时间</th><th>用户</th><th>模型</th><th>状态</th><th>输入 / 输出</th><th>耗时</th><th>费用</th><th></th></tr></thead><tbody id="logRows"></tbody></table></div><div id="emptyState" class="empty-state" hidden><div class="empty-icon">⌕</div><h2>没有找到记录</h2><p>试试减少筛选条件，或确认日志库连接正常。</p></div><div class="pagination"><button id="prevButton" class="button button-quiet" type="button">← 上一页</button><span id="pageLabel">第 1 页</span><button id="nextButton" class="button button-quiet" type="button">下一页 →</button></div></section>
+      </main>
+    </section>
+
+    <aside id="detailDrawer" class="drawer" aria-label="日志详情" aria-hidden="true"><div class="drawer-backdrop" data-close-drawer></div><div class="drawer-panel"><div class="drawer-header"><div><p class="eyebrow">LOG DETAIL</p><h2 id="detailTitle">日志详情</h2></div><button class="icon-button" type="button" data-close-drawer aria-label="关闭">×</button></div><div id="detailBody" class="drawer-body"></div></div></aside>
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  </div>
+  <script src="/assets/app.js" defer></script>
+</body>
+</html>

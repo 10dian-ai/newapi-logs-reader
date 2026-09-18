@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NewAPI Logs Reader</title>
+  <link rel="stylesheet" href="/static/assets/app.css">
+</head>
+<body>
+  <header class="topbar">
+    <div><p class="eyebrow">NEWAPI / OBSERVABILITY</p><h1>日志阅读器</h1></div>
+    <div class="status"><span id="status-dot"></span><span id="status-text">检查连接中</span><code>:3333</code></div>
+  </header>
+  <main class="layout">
+    <section class="toolbar panel">
+      <div class="search-row">
+        <label class="search"><span>⌕</span><input id="q" placeholder="搜索 prompt、回复、模型、请求 ID…" autocomplete="off"></label>
+        <select id="field" aria-label="搜索范围"><option value="all">全部内容</option><option value="prompt">仅输入 Prompt</option><option value="response">仅回复 Response</option><option value="content">日志内容</option><option value="model">模型名称</option></select>
+        <button id="search" class="primary">搜索</button>
+      </div>
+      <div class="filter-row">
+        <label>模型 <input id="model" placeholder="例如 gpt-4o"></label>
+        <label>用户名 <input id="username" placeholder="username"></label>
+        <label>令牌名 <input id="token_name" placeholder="token"></label>
+        <label>类型 <select id="log_type"><option value="">全部</option><option value="2">消费</option><option value="5">错误</option><option value="1">充值</option><option value="3">管理</option><option value="4">系统</option></select></label>
+        <button id="clear" class="secondary">清空筛选</button>
+      </div>
+    </section>
+    <section class="stats"><div><strong id="total">—</strong><span>匹配记录</span></div><div><strong id="page-label">—</strong><span>当前页</span></div><div><strong id="db-label">—</strong><span>数据源</span></div></section>
+    <section class="content-grid">
+      <div class="panel list-panel"><div class="list-head"><span>时间 / 模型</span><span>Token / 状态</span></div><div id="rows" class="rows"><div class="empty">正在读取日志…</div></div><div class="pager"><button id="prev" class="secondary">← 上一页</button><span id="pager-text">—</span><button id="next" class="secondary">下一页 →</button></div></div>
+      <article id="detail" class="panel detail-panel"><div class="empty"><span class="empty-mark">◎</span><h2>选择一条日志</h2><p>完整 prompt、回复和 New API 保留的原始字段会显示在这里。</p></div></article>
+    </section>
+  </main>
+  <script src="/static/assets/app.js" defer></script>
+</body>
+</html>

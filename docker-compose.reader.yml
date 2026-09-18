@@ -1,0 +1,17 @@
+services:
+  newapi-logs-reader:
+    build: .
+    container_name: newapi-logs-reader
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "3333:3333"
+    # 将下面网络名改成 NewAPI 所在的 Docker 网络名称
+    networks:
+      - newapi
+
+networks:
+  newapi:
+    external: true
+    name: ${NEWAPI_DOCKER_NETWORK:-newapi_default}

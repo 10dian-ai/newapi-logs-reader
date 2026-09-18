@@ -1,0 +1,8 @@
+FROM python:3.12-slim
+WORKDIR /app
+COPY requirements_v2.txt .
+RUN pip install --no-cache-dir -r requirements_v2.txt
+COPY server_v2.py server_entry.py .
+COPY public_v2 ./public_v2
+EXPOSE 3333
+CMD ["python", "server_entry.py"]
