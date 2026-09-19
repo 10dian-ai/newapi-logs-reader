@@ -21,6 +21,50 @@ SESSION_COOKIE = os.getenv("SESSION_COOKIE", "newapi_logs_session")
 SESSION_SECURE = os.getenv("SESSION_SECURE", "0").lower() in {"1", "true", "yes", "on"}
 MAX_PAGE = 200
 MAX_EXPORT = max(100, int(os.getenv("MAX_EXPORT_ROWS", "10000")))
+FILES_ROOT = Path(os.getenv("FILES_ROOT", "/sources/new-api")).resolve()
+MAX_FILE_READ = max(32 * 1024, int(os.getenv("MAX_FILE_READ_BYTES", str(256 * 1024))))
+MAX_FILE_ITEMS = max(100, int(os.getenv("MAX_FILE_ITEMS", "2000")))
+
+def file_safe_path(raw: str) -> Path:
+    requested = (FILES_ROOT / raw.lstrip("/")).resolve()
+    if requested != FILES_ROOT and FILES_ROOT not in requested.parents:
+        raise HTTPException(400, "文件路径越界")
+    return requested
+
+def redact_file_text(text: str, reveal: bool = False) -> str:
+    if reveal:
+        return text
+    text = re.sub(r"(?i)(postgres(?:ql)?://[^:/\s]+:)[^@\s]+(@)", r"\1[REDACTED]\2", text)
+    text = re.sub(r"(?i)((?:password|passwd|secret|token|api[_-]?key)\s*[:=]\s*)([^\s,;]+)", r"\1[REDACTED]", text)
+    return text
+
+def file_items(q: str = "", regex: bool = False, prefix: str = "") -> list[dict[str, Any]]:
+    if not FILES_ROOT.exists():
+        return []
+    pattern = None
+    if regex and q:
+        try:
+            pattern = re.compile(q, re.I)
+        except re.error as e:
+            raise HTTPException(400, f"正则表达式无效：{e}") from e
+    base = file_safe_path(prefix) if prefix else FILES_ROOT
+    if not base.exists():
+        return []
+    found = []
+    for root, dirs, names in os.walk(base):
+        dirs[:] = [d for d in dirs if d not in {".git", "__pycache__", "node_modules"}]
+        for name in names:
+            path = Path(root) / name
+            try:
+                rel = path.relative_to(FILES_ROOT).as_posix()
+                stat = path.stat()
+            except OSError:
+                continue
+            if q and not ((pattern.search(rel) if pattern else q.casefold() in rel.casefold())):
+                continue
+            found.append({"path": "/" + rel, "name": name, "size": stat.st_size, "modified": stat.st_mtime, "kind": path.suffix.lower().lstrip(".") or "file", "sensitive": bool(re.search(r"(^|/)(\.env|.*\.dump$|.*\.key$|.*secret.*|.*password.*)", rel, re.I))})
+    found.sort(key=lambda x: (x["modified"], x["path"]), reverse=True)
+    return found[:MAX_FILE_ITEMS]
 
 def j(v: Any) -> Any:
     if v is None or isinstance(v, (dict, list, int, float, bool)): return v
@@ -327,6 +371,26 @@ def auth_me(req: Request) -> dict[str,Any]:
 @app.post("/api/auth/logout")
 def logout(response: Response) -> dict[str,bool]:
     response.delete_cookie(SESSION_COOKIE,path="/"); return {"ok":True}
+
+@app.get("/api/files")
+def files(q: str = Query("", max_length=300), regex: bool = Query(False), prefix: str = Query(""), _user: str = Depends(auth)) -> dict[str, Any]:
+    return {"root": str(FILES_ROOT), "items": file_items(q, regex, prefix), "read_only": True, "max_read_bytes": MAX_FILE_READ}
+
+@app.get("/api/file")
+def file_content(path: str = Query(..., max_length=1000), reveal: bool = Query(False), _user: str = Depends(auth)) -> dict[str, Any]:
+    target = file_safe_path(path)
+    if not target.is_file():
+        raise HTTPException(404, "文件不存在")
+    stat = target.stat()
+    with target.open("rb") as stream:
+        if stat.st_size > MAX_FILE_READ:
+            stream.seek(max(0, stat.st_size - MAX_FILE_READ))
+        raw = stream.read(MAX_FILE_READ + 1)
+    binary = b"\x00" in raw[:4096]
+    if binary:
+        return {"path": path, "size": stat.st_size, "binary": True, "content": "二进制文件不在网页中展开"}
+    text = raw[:MAX_FILE_READ].decode("utf-8", "replace")
+    return {"path": path, "size": stat.st_size, "binary": False, "truncated": stat.st_size > MAX_FILE_READ or len(raw) > MAX_FILE_READ, "sensitive": bool(re.search(r"(^|/)(\.env|.*\.dump$|.*\.key$|.*secret.*|.*password.*)", path, re.I)), "content": redact_file_text(text, reveal)}
 
 @app.get("/api/logs")
 def logs(page:int=Query(1,ge=1),page_size:int=Query(50,ge=1,le=MAX_PAGE),offset:int|None=Query(None,ge=0),limit:int|None=Query(None,ge=1,le=MAX_PAGE),q:str=Query("",max_length=1000),field:str=Query("all"),model:str=Query("",max_length=200),username:str=Query("",max_length=200),status:str=Query(""),token_name:str=Query("",max_length=200),log_type:str=Query(""),regex:bool=Query(False),after_id:str=Query("",max_length=80),reveal:bool=Query(False),source:str=Query("all"),_user:str=Depends(auth)) -> dict[str,Any]:
