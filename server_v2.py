@@ -50,6 +50,7 @@ def enrich(row: dict[str, Any]) -> dict[str, Any]:
     r = walk(other, {"response","reply","responsebody","completion","output","choices","data"})
     row["prompt"] = txt(p[0] if p else row.get("prompt", ""))
     row["reply"] = txt(r[0] if r else row.get("reply", ""))
+    row["response"] = row["reply"]
     row["other_json"] = other
     return row
 
@@ -238,7 +239,23 @@ def health_alias() -> dict[str,Any]:
 @app.get("/healthz")
 def health() -> dict[str,Any]:
     p,l=main_db.status("users"),log_db.status("logs")
-    return {"ok":bool(p["ok"] and l["ok"]),"primary":p,"logs":l,"auth":"root-user"}
+    payload_capable = False
+    audit_capable = False
+    channels_capable = False
+    try:
+        payload_capable = bool(log_db.cols("payload_logs"))
+        audit_capable = bool(log_db.cols("audit_logs"))
+        channels_capable = bool(main_db.cols("channels"))
+    except Exception:
+        pass
+    return {
+        "ok": bool(p["ok"] and l["ok"]),
+        "primary": p,
+        "logs": l,
+        "same_database": bool(MAIN_DSN and LOG_DSN and MAIN_DSN == LOG_DSN),
+        "capabilities": {"payload_logs": payload_capable, "audit_logs": audit_capable, "channels": channels_capable},
+        "auth": "root-user",
+    }
 @app.get("/api/auth/status")
 def auth_status(req: Request) -> dict[str,Any]:
     user=session_user(req); return {"authenticated":bool(user),"username":user,"expires_in":SESSION_TTL if user else 0}
@@ -264,7 +281,8 @@ def logout(response: Response) -> dict[str,bool]:
 def logs(page:int=Query(1,ge=1),page_size:int=Query(50,ge=1,le=MAX_PAGE),offset:int|None=Query(None,ge=0),limit:int|None=Query(None,ge=1,le=MAX_PAGE),q:str=Query("",max_length=1000),field:str=Query("all"),model:str=Query("",max_length=200),username:str=Query("",max_length=200),status:str=Query(""),token_name:str=Query("",max_length=200),log_type:str=Query(""),regex:bool=Query(False),after_id:str=Query("",max_length=80),reveal:bool=Query(False),_user:str=Depends(auth)) -> dict[str,Any]:
     if offset is not None: page = offset // (limit or page_size) + 1
     if limit is not None: page_size = limit
-    if status and not log_type: log_type = status
+    if status and not log_type:
+        log_type = {"error": "5", "success": "2", "pending": "0"}.get(status, status if status.isdigit() else "")
     try: return log_db.query(page,page_size,q,field,model,username,token_name,log_type,regex,after_id,reveal)
     except ValueError as e: raise HTTPException(400,str(e)) from e
     except Exception as e: raise HTTPException(500,str(e)) from e
