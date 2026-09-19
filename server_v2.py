@@ -9,6 +9,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+import capture_store
 
 PORT = int(os.getenv("PORT", os.getenv("APP_PORT", "3333")))
 HOST = os.getenv("HOST", os.getenv("APP_HOST", "0.0.0.0"))
@@ -291,6 +292,7 @@ def combined_logs(page=1, page_size=50, q="", field="all", model="", username=""
 
 main_db, log_db = DB(MAIN_DSN,"primary"), DB(LOG_DSN,"logs")
 app=FastAPI(title="NewAPI Logs Reader")
+capture_store.init_db()
 public=Path(__file__).with_name("public_v2")
 if public.is_dir():
     app.mount("/static",StaticFiles(directory=public),name="static")
@@ -392,6 +394,39 @@ def file_content(path: str = Query(..., max_length=1000), reveal: bool = Query(F
     text = raw[:MAX_FILE_READ].decode("utf-8", "replace")
     return {"path": path, "size": stat.st_size, "binary": False, "truncated": stat.st_size > MAX_FILE_READ or len(raw) > MAX_FILE_READ, "sensitive": bool(re.search(r"(^|/)(\.env|.*\.dump$|.*\.key$|.*secret.*|.*password.*)", path, re.I)), "content": redact_file_text(text, reveal)}
 
+@app.get("/api/capture/status")
+def capture_status(_user: str = Depends(auth)) -> dict[str, Any]:
+    state = capture_store.status()
+    state["proxy_port"] = int(os.getenv("CAPTURE_PROXY_PORT", "3334"))
+    state["target"] = os.getenv("CAPTURE_TARGET", "http://new-api:3000")
+    state["requires_newapi_auth_header"] = True
+    return state
+
+@app.post("/api/capture/start")
+def capture_start(_user: str = Depends(auth)) -> dict[str, Any]:
+    state = capture_store.start_session()
+    state["proxy_port"] = int(os.getenv("CAPTURE_PROXY_PORT", "3334"))
+    state["target"] = os.getenv("CAPTURE_TARGET", "http://new-api:3000")
+    return state
+
+@app.post("/api/capture/stop")
+def capture_stop(_user: str = Depends(auth)) -> dict[str, Any]:
+    return capture_store.stop_session()
+
+@app.get("/api/captures")
+def captures(limit: int = Query(100, ge=1, le=500), _user: str = Depends(auth)) -> dict[str, Any]:
+    return {"items": capture_store.list_records(limit)}
+
+@app.get("/api/captures/{record_id}")
+def capture_detail(record_id: int, reveal: bool = Query(False), _user: str = Depends(auth)) -> dict[str, Any]:
+    record = capture_store.get_record(record_id)
+    if not record:
+        raise HTTPException(404, "捕获记录不存在")
+    if not reveal:
+        for key in ("request_body", "response_body", "prompt"):
+            record[key] = redact_file_text(str(record.get(key) or ""), False)
+    return record
+
 @app.get("/api/logs")
 def logs(page:int=Query(1,ge=1),page_size:int=Query(50,ge=1,le=MAX_PAGE),offset:int|None=Query(None,ge=0),limit:int|None=Query(None,ge=1,le=MAX_PAGE),q:str=Query("",max_length=1000),field:str=Query("all"),model:str=Query("",max_length=200),username:str=Query("",max_length=200),status:str=Query(""),token_name:str=Query("",max_length=200),log_type:str=Query(""),regex:bool=Query(False),after_id:str=Query("",max_length=80),reveal:bool=Query(False),source:str=Query("all"),_user:str=Depends(auth)) -> dict[str,Any]:
     if offset is not None: page = offset // (limit or page_size) + 1
@@ -427,5 +462,7 @@ def index() -> HTMLResponse:
     p=public/"index.html"; return HTMLResponse(p.read_text(encoding="utf-8") if p.exists() else "<h1>NewAPI Logs Reader</h1>")
 if __name__=="__main__":
     import uvicorn
+    import capture_proxy
+    capture_proxy.start_proxy()
     uvicorn.run("server_v2:app",host=HOST,port=PORT,reload=False)
 

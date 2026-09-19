@@ -34,7 +34,7 @@
       </header>
 
       <main class="page-wrap">
-        <div class="page-heading"><div><p class="eyebrow">REQUEST HISTORY</p><h1>调用日志</h1><p class="muted">搜索请求、响应以及 NewAPI 记录的元数据。</p></div><div class="heading-actions"><button id="fileViewButton" class="button button-secondary" type="button">文件日志</button><button id="refreshButton" class="button button-secondary" type="button"><span class="button-icon">↻</span>刷新</button><label class="switch-control"><input id="liveToggle" type="checkbox" /><span class="switch" aria-hidden="true"></span><span>实时刷新</span></label></div></div>
+        <div class="page-heading"><div><p class="eyebrow">REQUEST HISTORY</p><h1>调用日志</h1><p class="muted">搜索请求、响应以及 NewAPI 记录的元数据。</p></div><div class="heading-actions"><button id="captureButton" class="button button-secondary" type="button">开始捕获</button><button id="fileViewButton" class="button button-secondary" type="button">文件日志</button><button id="refreshButton" class="button button-secondary" type="button"><span class="button-icon">↻</span>刷新</button><label class="switch-control"><input id="liveToggle" type="checkbox" /><span class="switch" aria-hidden="true"></span><span>实时刷新</span></label></div></div>
 
         <div class="status-strip" id="healthStrip"><div class="status-item"><span class="status-light status-unknown"></span><span class="status-label">主库</span><strong data-health="main">检测中</strong></div><div class="status-item"><span class="status-light status-unknown"></span><span class="status-label">日志库</span><strong data-health="log">检测中</strong></div><div class="status-item status-time"><span id="lastUpdated">尚未刷新</span></div></div>
 
@@ -47,6 +47,10 @@
         <section class="toolbar"><div class="result-count"><strong id="resultCount">0</strong><span>条记录</span><span id="loadingIndicator" class="loading-indicator" hidden>加载中…</span></div><div class="toolbar-actions"><button id="jsonExportButton" class="button button-secondary" type="button">导出 JSON</button><button id="csvExportButton" class="button button-secondary" type="button">导出 CSV</button></div></section>
 
         <section class="panel table-panel"><div class="table-scroll"><table><thead><tr><th>时间</th><th>用户</th><th>模型</th><th>状态</th><th>输入 / 输出</th><th>耗时</th><th>费用</th><th></th></tr></thead><tbody id="logRows"></tbody></table></div><div id="emptyState" class="empty-state" hidden><div class="empty-icon">⌕</div><h2>没有找到记录</h2><p>试试减少筛选条件，或确认日志库连接正常。</p></div><div class="pagination"><button id="prevButton" class="button button-quiet" type="button">← 上一页</button><span id="pageLabel">第 1 页</span><button id="nextButton" class="button button-quiet" type="button">下一页 →</button></div></section>
+        <section id="capturePanel" class="panel capture-panel" hidden>
+          <div class="capture-panel-head"><div><p class="eyebrow">LIVE CAPTURE / PROXY</p><h2>主动捕获</h2><p class="muted">先点击开始捕获，再把客户端 API 地址改为 <code>http://159.195.13.120:3334</code>。请求必须保留原来的 NewAPI Authorization/API-key。</p></div><div><button id="captureToggleButton" class="button button-primary" type="button">开始捕获</button><span id="captureStatus" class="muted"></span></div></div>
+          <div id="captureRows" class="capture-rows"></div>
+        </section>
         <section id="filePanel" class="panel file-panel" hidden>
           <div class="file-panel-head"><div><p class="eyebrow">FILES / READ ONLY</p><h2>NewAPI 根目录文件</h2><p class="muted">只读浏览 /root/new-api，敏感文件默认脱敏。</p></div><div class="file-search"><input id="filePrefix" placeholder="/logs 或 /docker-compose.yml"><input id="fileQuery" placeholder="按路径搜索"><button id="fileSearchButton" class="button button-secondary" type="button">扫描</button></div></div>
           <div id="fileRows" class="file-rows"></div>
