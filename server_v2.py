@@ -128,6 +128,9 @@ class DB:
             rows = [x for x in self.demo_rows() if self.matches(x, q, field, model, username, token_name, log_type, regex)]
             total, start = len(rows), (page - 1) * page_size
             items = [visible(x, reveal) for x in rows[start:start + page_size]]
+            for item in items:
+                item["_source"] = self.label
+                item["record_key"] = f"{self.label}:{item.get('id')}"
             return {"items": items, "total": total, "page": page, "page_size": page_size, "database": "demo", "database_label": self.label, "generated_at": datetime.now(tz=timezone.utc).isoformat(), "latest_id": items[0].get("id") if items else None, "poll_after_ms": 5000}
         cols = self.cols("logs")
         selected = [x for x in ("id", "user_id", "created_at", "type", "content", "username", "token_name", "model_name", "quota", "prompt_tokens", "completion_tokens", "use_time", "is_stream", "channel_id", "channel_name", "token_id", "group", "ip", "request_id", "upstream_request_id", "other", "response_payload", "request_payload") if x in cols]
@@ -167,6 +170,9 @@ class DB:
             fetched = cur.fetchall()
             rows = [dict(x) if isinstance(x, sqlite3.Row) else dict(zip(selected, x)) for x in fetched]
         items = [visible(x, reveal) for x in rows]
+        for item in items:
+            item["_source"] = self.label
+            item["record_key"] = f"{self.label}:{item.get('id')}"
         return {"items": items, "total": total, "page": page, "page_size": page_size, "database": self.kind, "database_label": self.label, "generated_at": datetime.now(tz=timezone.utc).isoformat(), "latest_id": items[0].get("id") if items else None, "poll_after_ms": 5000}
     def get(self, ident: str, reveal=False) -> dict[str, Any] | None:
         if self.kind == "demo":
@@ -193,6 +199,51 @@ class DB:
     def status(self, table: str) -> dict[str,Any]:
         try: return {"ok":bool(self.cols(table)),"database":self.kind,"label":self.label,"table":table,"columns":sorted(self.cols(table))}
         except Exception as e: return {"ok":False,"database":self.kind,"label":self.label,"table":table,"error":str(e)}
+
+def combined_logs(page=1, page_size=50, q="", field="all", model="", username="", token_name="", log_type="", regex=False, after_id="", reveal=False, source="all") -> dict[str, Any]:
+    source = source.lower()
+    if source in {"primary", "main"}:
+        targets = [main_db]
+    elif source in {"logs", "log"}:
+        targets = [log_db]
+    elif MAIN_DSN and LOG_DSN and MAIN_DSN == LOG_DSN:
+        targets = [log_db]
+    else:
+        targets = [main_db, log_db]
+    fetch_size = min(MAX_EXPORT, max(page * page_size, page_size))
+    results = [db.query(1, fetch_size, q, field, model, username, token_name, log_type, regex, after_id, reveal) for db in targets]
+    merged = []
+    total = 0
+    for result in results:
+        total += int(result.get("total", 0))
+        merged.extend(result.get("items", []))
+    def sort_key(item):
+        created = item.get("created_at")
+        try:
+            created = int(created)
+        except (TypeError, ValueError):
+            created = 0
+        ident = str(item.get("id", ""))
+        try:
+            ident_key = int(ident)
+        except ValueError:
+            ident_key = 0
+        return (created, ident_key, str(item.get("_source", "")))
+    merged.sort(key=sort_key, reverse=True)
+    start = (page - 1) * page_size
+    items = merged[start:start + page_size]
+    return {
+        "items": items,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "database": "combined" if len(targets) > 1 else targets[0].label,
+        "database_label": "主库 + 日志库" if len(targets) > 1 else targets[0].label,
+        "generated_at": datetime.now(tz=timezone.utc).isoformat(),
+        "latest_id": items[0].get("id") if items else None,
+        "poll_after_ms": 5000,
+        "sources": [db.label for db in targets],
+    }
 
 main_db, log_db = DB(MAIN_DSN,"primary"), DB(LOG_DSN,"logs")
 app=FastAPI(title="NewAPI Logs Reader")
@@ -278,23 +329,28 @@ def logout(response: Response) -> dict[str,bool]:
     response.delete_cookie(SESSION_COOKIE,path="/"); return {"ok":True}
 
 @app.get("/api/logs")
-def logs(page:int=Query(1,ge=1),page_size:int=Query(50,ge=1,le=MAX_PAGE),offset:int|None=Query(None,ge=0),limit:int|None=Query(None,ge=1,le=MAX_PAGE),q:str=Query("",max_length=1000),field:str=Query("all"),model:str=Query("",max_length=200),username:str=Query("",max_length=200),status:str=Query(""),token_name:str=Query("",max_length=200),log_type:str=Query(""),regex:bool=Query(False),after_id:str=Query("",max_length=80),reveal:bool=Query(False),_user:str=Depends(auth)) -> dict[str,Any]:
+def logs(page:int=Query(1,ge=1),page_size:int=Query(50,ge=1,le=MAX_PAGE),offset:int|None=Query(None,ge=0),limit:int|None=Query(None,ge=1,le=MAX_PAGE),q:str=Query("",max_length=1000),field:str=Query("all"),model:str=Query("",max_length=200),username:str=Query("",max_length=200),status:str=Query(""),token_name:str=Query("",max_length=200),log_type:str=Query(""),regex:bool=Query(False),after_id:str=Query("",max_length=80),reveal:bool=Query(False),source:str=Query("all"),_user:str=Depends(auth)) -> dict[str,Any]:
     if offset is not None: page = offset // (limit or page_size) + 1
     if limit is not None: page_size = limit
     if status and not log_type:
         log_type = {"error": "5", "success": "2", "pending": "0"}.get(status, status if status.isdigit() else "")
-    try: return log_db.query(page,page_size,q,field,model,username,token_name,log_type,regex,after_id,reveal)
+    try: return combined_logs(page,page_size,q,field,model,username,token_name,log_type,regex,after_id,reveal,source)
     except ValueError as e: raise HTTPException(400,str(e)) from e
     except Exception as e: raise HTTPException(500,str(e)) from e
 @app.get("/api/logs/{ident}")
 def detail(ident:str,reveal:bool=Query(False),_user:str=Depends(auth)) -> dict[str,Any]:
-    try: row=log_db.get(ident,reveal)
+    db = log_db
+    raw_ident = ident
+    if ":" in ident:
+        source_name, raw_ident = ident.split(":", 1)
+        db = main_db if source_name in {"primary", "main"} else log_db
+    try: row=db.get(raw_ident,reveal)
     except Exception as e: raise HTTPException(500,str(e)) from e
     if row is None: raise HTTPException(404,"日志不存在")
     return row
 @app.get("/api/export")
-def export(format:str=Query("json",pattern="^(json|csv)$"),q:str=Query("",max_length=1000),field:str=Query("all"),model:str=Query("",max_length=200),username:str=Query("",max_length=200),token_name:str=Query("",max_length=200),log_type:str=Query(""),regex:bool=Query(False),reveal:bool=Query(False),_user:str=Depends(auth)) -> Response:
-    try: result=log_db.query(1,MAX_EXPORT,q,field,model,username,token_name,log_type,regex,"",reveal)
+def export(format:str=Query("json",pattern="^(json|csv)$"),q:str=Query("",max_length=1000),field:str=Query("all"),model:str=Query("",max_length=200),username:str=Query("",max_length=200),token_name:str=Query("",max_length=200),log_type:str=Query(""),regex:bool=Query(False),reveal:bool=Query(False),source:str=Query("all"),_user:str=Depends(auth)) -> Response:
+    try: result=combined_logs(1,MAX_EXPORT,q,field,model,username,token_name,log_type,regex,"",reveal,source)
     except ValueError as e: raise HTTPException(400,str(e)) from e
     except Exception as e: raise HTTPException(500,str(e)) from e
     stamp=datetime.now(tz=timezone.utc).strftime("%Y%m%d-%H%M%S"); fn=f'attachment; filename="newapi-logs-{stamp}.{format}"'
