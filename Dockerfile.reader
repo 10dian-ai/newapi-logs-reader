@@ -7,3 +7,4 @@ COPY public_v2 ./public_v2
 EXPOSE 3333 3334
 CMD ["python", "server_entry.py"]
 
+
