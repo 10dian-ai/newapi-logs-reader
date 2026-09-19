@@ -100,9 +100,15 @@ class DB:
         self._cols[table] = out
         return out
     def ph(self) -> str: return "?" if self.kind == "sqlite" else "%s"
-    def cast(self, col: str) -> str: return col if self.kind == "sqlite" else f"CAST({col} AS TEXT)"
+    def ident(self, name: str) -> str:
+        return '"' + name.replace('"', '""') + '"'
+    def cast(self, col: str) -> str:
+        quoted = self.ident(col)
+        return f"CAST({quoted} AS TEXT)"
     def op(self, col: str, regex: bool) -> str:
-        return f"{self.cast(col)} LIKE {self.ph()}" + (" COLLATE NOCASE" if self.kind == "sqlite" else "") if not regex else (f"{self.cast(col)} LIKE {self.ph()}" if self.kind == "sqlite" else f"{self.cast(col)} ~* {self.ph()}")
+        if regex:
+            return f"{self.cast(col)} LIKE {self.ph()}" if self.kind == "sqlite" else f"{self.cast(col)} ~* {self.ph()}"
+        return f"{self.cast(col)} LIKE {self.ph()}" + (" COLLATE NOCASE" if self.kind == "sqlite" else "")
     def demo_rows(self) -> list[dict[str, Any]]:
         return [{"id":1,"created_at":int(datetime.now(tz=timezone.utc).timestamp()),"type":2,"content":"演示记录，请配置 DB_DSN 与 LOG_DB_DSN","username":"demo","token_name":"demo-token","model_name":"demo-model","prompt_tokens":12,"completion_tokens":8,"quota":20,"other":{"prompt":[{"role":"user","content":"你好，New API"}],"response":{"content":"演示回复"}}}]
     def matches(self, row: dict[str, Any], q: str, field: str, model: str, user: str, token: str, typ: str, regex: bool) -> bool:
@@ -111,51 +117,77 @@ class DB:
             except re.error: return False
         return (not model or hit(row.get("model_name"), model)) and (not user or hit(row.get("username"), user)) and (not token or hit(row.get("token_name"), token)) and (not typ or str(row.get("type")) == typ) and (not q or hit(enrich(dict(row)).get(field) if field in {"prompt","response","content","model"} else row, q))
     def query(self, page=1, page_size=50, q="", field="all", model="", username="", token_name="", log_type="", regex=False, after_id="", reveal=False) -> dict[str, Any]:
-        page, page_size = max(1,page), min(MAX_EXPORT,max(1,page_size))
+        page, page_size = max(1, page), min(MAX_EXPORT, max(1, page_size))
         if regex and q:
-            try: re.compile(q)
-            except re.error as e: raise ValueError(f"正则表达式无效：{e}") from e
+            try:
+                re.compile(q)
+            except re.error as e:
+                raise ValueError(f"正则表达式无效：{e}") from e
         if self.kind == "demo":
-            rows = [x for x in self.demo_rows() if self.matches(x,q,field,model,username,token_name,log_type,regex)]
-            total, start = len(rows), (page-1)*page_size
-            items = [visible(x,reveal) for x in rows[start:start+page_size]]
-            return {"items":items,"total":total,"page":page,"page_size":page_size,"database":"demo","database_label":self.label,"generated_at":datetime.now(tz=timezone.utc).isoformat(),"latest_id":items[0].get("id") if items else None,"poll_after_ms":5000}
+            rows = [x for x in self.demo_rows() if self.matches(x, q, field, model, username, token_name, log_type, regex)]
+            total, start = len(rows), (page - 1) * page_size
+            items = [visible(x, reveal) for x in rows[start:start + page_size]]
+            return {"items": items, "total": total, "page": page, "page_size": page_size, "database": "demo", "database_label": self.label, "generated_at": datetime.now(tz=timezone.utc).isoformat(), "latest_id": items[0].get("id") if items else None, "poll_after_ms": 5000}
         cols = self.cols("logs")
-        selected = [x for x in ("id","user_id","created_at","type","content","username","token_name","model_name","quota","prompt_tokens","completion_tokens","use_time","is_stream","channel_id","channel_name","token_id","group","ip","request_id","upstream_request_id","other","response_payload","request_payload") if x in cols]
-        if not selected: raise RuntimeError("logs 表不存在")
-        where: list[str] = []; vals: list[Any] = []
-        for val,col in ((model,"model_name"),(username,"username"),(token_name,"token_name")):
-            if val and col in cols: where.append(self.op(col,regex)); vals.append(val if regex else f"%{val}%")
-        if log_type and "type" in cols: where.append("type="+self.ph()); vals.append(int(log_type))
+        selected = [x for x in ("id", "user_id", "created_at", "type", "content", "username", "token_name", "model_name", "quota", "prompt_tokens", "completion_tokens", "use_time", "is_stream", "channel_id", "channel_name", "token_id", "group", "ip", "request_id", "upstream_request_id", "other", "response_payload", "request_payload") if x in cols]
+        if not selected:
+            raise RuntimeError("logs 表不存在")
+        where: list[str] = []
+        vals: list[Any] = []
+        for val, col in ((model, "model_name"), (username, "username"), (token_name, "token_name")):
+            if val and col in cols:
+                where.append(self.op(col, regex))
+                vals.append(val if regex else f"%{val}%")
+        if log_type and "type" in cols:
+            where.append(self.ident("type") + "=" + self.ph())
+            vals.append(int(log_type))
         if after_id and "id" in cols:
-            try: where.append("id>"+self.ph()); vals.append(int(after_id))
-            except ValueError: pass
+            try:
+                where.append(self.ident("id") + ">" + self.ph())
+                vals.append(int(after_id))
+            except ValueError:
+                pass
         if q:
-            fmap={"prompt":["other","request_payload","content"],"response":["other","response_payload","content"],"content":["content"],"model":["model_name"],"all":selected}
-            qcols=[x for x in fmap.get(field,selected) if x in cols]
+            fmap = {"prompt": ["other", "request_payload", "content"], "response": ["other", "response_payload", "content"], "content": ["content"], "model": ["model_name"], "all": selected}
+            qcols = [x for x in fmap.get(field, selected) if x in cols]
             if qcols:
-                where.append("("+" OR ".join(self.op(x,regex) for x in qcols)+")"); vals.extend([q if regex else f"%{q}%"]*len(qcols))
-        cond=" WHERE "+" AND ".join(where) if where else ""; ph=self.ph(); order="created_at DESC,id DESC" if "created_at" in cols else "id DESC"
+                where.append("(" + " OR ".join(self.op(x, regex) for x in qcols) + ")")
+                vals.extend([q if regex else f"%{q}%"] * len(qcols))
+        table = self.ident("logs")
+        cond = " WHERE " + " AND ".join(where) if where else ""
+        ph = self.ph()
+        order = self.ident("created_at") + " DESC, " + self.ident("id") + " DESC" if "created_at" in cols else self.ident("id") + " DESC"
+        select_sql = ", ".join(self.ident(x) for x in selected)
         with self.conn() as c:
-            cur=c.cursor(); cur.execute(f"SELECT COUNT(*) FROM logs{cond}",vals); total=int(cur.fetchone()[0])
-            cur.execute(f"SELECT {', '.join(selected)} FROM logs{cond} ORDER BY {order} LIMIT {ph} OFFSET {ph}",vals+[page_size,(page-1)*page_size])
-            rows=[dict(x) if isinstance(x,sqlite3.Row) else dict(zip(selected,x)) for x in cur.fetchall()]
-        items=[visible(x,reveal) for x in rows]
-        return {"items":items,"total":total,"page":page,"page_size":page_size,"database":self.kind,"database_label":self.label,"generated_at":datetime.now(tz=timezone.utc).isoformat(),"latest_id":items[0].get("id") if items else None,"poll_after_ms":5000}
-    def get(self, ident: str, reveal=False) -> dict[str,Any] | None:
-        if self.kind=="demo": return visible(self.demo_rows()[0],reveal) if ident=="1" else None
-        cols=self.cols("logs"); selected=[x for x in ("id","user_id","created_at","type","content","username","token_name","model_name","quota","prompt_tokens","completion_tokens","use_time","is_stream","channel_id","channel_name","token_id","group","ip","request_id","upstream_request_id","other","response_payload","request_payload") if x in cols]
+            cur = c.cursor()
+            cur.execute(f"SELECT COUNT(*) FROM {table}{cond}", vals)
+            total = int(cur.fetchone()[0])
+            cur.execute(f"SELECT {select_sql} FROM {table}{cond} ORDER BY {order} LIMIT {ph} OFFSET {ph}", vals + [page_size, (page - 1) * page_size])
+            fetched = cur.fetchall()
+            rows = [dict(x) if isinstance(x, sqlite3.Row) else dict(zip(selected, x)) for x in fetched]
+        items = [visible(x, reveal) for x in rows]
+        return {"items": items, "total": total, "page": page, "page_size": page_size, "database": self.kind, "database_label": self.label, "generated_at": datetime.now(tz=timezone.utc).isoformat(), "latest_id": items[0].get("id") if items else None, "poll_after_ms": 5000}
+    def get(self, ident: str, reveal=False) -> dict[str, Any] | None:
+        if self.kind == "demo":
+            return visible(self.demo_rows()[0], reveal) if ident == "1" else None
+        cols = self.cols("logs")
+        selected = [x for x in ("id", "user_id", "created_at", "type", "content", "username", "token_name", "model_name", "quota", "prompt_tokens", "completion_tokens", "use_time", "is_stream", "channel_id", "channel_name", "token_id", "group", "ip", "request_id", "upstream_request_id", "other", "response_payload", "request_payload") if x in cols]
         with self.conn() as c:
-            cur=c.cursor(); cur.execute(f"SELECT {', '.join(selected)} FROM logs WHERE id={self.ph()}",[ident]); row=cur.fetchone()
-        return None if row is None else visible(dict(row) if isinstance(row,sqlite3.Row) else dict(zip(selected,row)),reveal)
+            cur = c.cursor()
+            cur.execute(f"SELECT {', '.join(self.ident(x) for x in selected)} FROM {self.ident('logs')} WHERE {self.ident('id')}={self.ph()}", [ident])
+            row = cur.fetchone()
+        return None if row is None else visible(dict(row) if isinstance(row, sqlite3.Row) else dict(zip(selected, row)), reveal)
+
     def user(self, name: str) -> dict[str,Any] | None:
         if self.kind=="demo":
             p=os.getenv("ROOT_PASSWORD",""); return {"username":name,"password":p} if p else None
         cols=self.cols("users")
         if not {"username","password"}.issubset(cols): raise RuntimeError("users 表缺少 username/password")
-        sel=[x for x in ("id","username","password","role","status") if x in cols]
+        sel=[x for x in ("id", "username", "password", "role", "status") if x in cols]
         with self.conn() as c:
-            cur=c.cursor(); cur.execute(f"SELECT {', '.join(sel)} FROM users WHERE LOWER(username)=LOWER({self.ph()}) LIMIT 1",[name]); row=cur.fetchone()
+            cur = c.cursor()
+            cur.execute(f"SELECT {', '.join(self.ident(x) for x in sel)} FROM {self.ident('users')} WHERE LOWER({self.ident('username')})=LOWER({self.ph()}) LIMIT 1", [name])
+            row = cur.fetchone()
         return None if row is None else (dict(row) if isinstance(row,sqlite3.Row) else dict(zip(sel,row)))
     def status(self, table: str) -> dict[str,Any]:
         try: return {"ok":bool(self.cols(table)),"database":self.kind,"label":self.label,"table":table,"columns":sorted(self.cols(table))}
@@ -214,7 +246,8 @@ def auth_status(req: Request) -> dict[str,Any]:
 def login(payload: Login, response: Response) -> dict[str,Any]:
     try: user=main_db.user(payload.username)
     except Exception as e: raise HTTPException(503,str(e)) from e
-    if not user or not verify(payload.password,str(user.get("password",""))): raise HTTPException(401,"Root 用户名或密码错误")
+    if not user or int(user.get("role", 0) or 0) != 100 or int(user.get("status", 0) or 0) != 1 or not verify(payload.password, str(user.get("password", ""))):
+        raise HTTPException(401, "Root 用户名或密码错误")
     name=str(user.get("username") or payload.username); response.set_cookie(SESSION_COOKIE,token_for(name),max_age=SESSION_TTL,httponly=True,samesite="lax",secure=SESSION_SECURE,path="/")
     return {"ok":True,"username":name,"user":{"username":name},"expires_in":SESSION_TTL}
 @app.get("/api/auth/me")
